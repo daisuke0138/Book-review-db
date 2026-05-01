@@ -16,6 +16,10 @@ const jwt = require("jsonwebtoken");
 // 環境変数=秘密の鍵が使えるようにdotenvを記述して使えるようにします🤗
 require("dotenv");
 
+//CORS対策
+const cors = require("cors");
+
+
 // PORT=は起動するURLの番号になります🤗とても重要なので今回は統一してください🤗
 const PORT = 8888;
 
@@ -23,6 +27,7 @@ const PORT = 8888;
 const prisma = new PrismaClient();
 
 // jsで書いた文字列をjsonとしてexpressで使えるようにする必要があります🤗
+app.use(cors());
 app.use(express.json());
 
 // 新規ユーザーAPI
@@ -72,6 +77,56 @@ app.post("/api/auth/login", async (req, res) => {
     });
 
     return res.json({ token });
+});
+
+// 投稿用API
+app.post("/api/post", async (req, res) => {
+    const { content } = req.body;
+
+    if (!content) {
+        return res.json(400).json({
+            message: "投稿内容がありません！",
+        });
+    }
+
+    try {
+        // 登録の処理を記述していく🤗
+        const newPost = await prisma.post.create({
+            data: {
+                content,
+                authorId: 1, //MEMO: 最後に修正します🤗
+            },
+            include: {
+                author: true,
+            },
+        });
+        res.status(201).json(newPost);
+    } catch (err) {
+        console.log(err);
+        res.status(500).json({
+            message: "サーバーエラーです！項目がおかしい、何か見直してください！",
+        });
+    }
+});
+
+// 取得用API
+app.get("/api/get_post", async (req, res) => {
+    try {
+        // 取得の処理を記述していく🤗
+        const postData = await prisma.post.findMany({
+            take: 10,
+            orderBy: { createdAt: "desc" },
+            include: {
+                author: true,
+            },
+        });
+        res.status(201).json(postData);
+    } catch (err) {
+        console.log(err);
+        res.status(500).json({
+            message: "サーバーエラーです！項目がおかしい、何か見直してください！",
+        });
+    }
 });
 
 // ここでサーバーを起動します！！🤗
