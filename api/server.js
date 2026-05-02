@@ -135,5 +135,9 @@ app.get("/api/get_post", async (req, res) => {
     }
 });
 
-// ここでサーバーを起動します！！🤗
-app.listen(PORT, () => console.log("server start!!!"));
+// local環境ここでサーバーを起動します！！🤗
+// app.listen(PORT, () => console.log("server start!!!"));
+
+
+// 本番環境ここでサーバーを起動します！！
+module.exports = app;
