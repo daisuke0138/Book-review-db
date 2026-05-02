@@ -89,7 +89,7 @@ app.post("/api/post", async (req, res) => {
     const { content } = req.body;
 
     if (!content) {
-        return res.json(400).json({
+        return res.status(400).json({
             message: "投稿内容がありません！",
         });
     }
