@@ -14,7 +14,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
 // 環境変数=秘密の鍵が使えるようにdotenvを記述して使えるようにします🤗
-require("dotenv");
+require("dotenv").config();
 
 //CORS対策
 const cors = require("cors");
@@ -28,7 +28,7 @@ const prisma = new PrismaClient();
 
 // jsで書いた文字列をjsonとしてexpressで使えるようにする必要があります🤗
 // app.use(cors());
-app.use(cors({
+app.options('*', cors({
     origin: "https://book-review-sage-seven.vercel.app",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
