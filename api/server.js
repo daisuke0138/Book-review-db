@@ -28,7 +28,7 @@ const prisma = new PrismaClient();
 
 // jsで書いた文字列をjsonとしてexpressで使えるようにする必要があります🤗
 app.use(cors({
-    origin: "https://book-review-sage-seven.vercel.app",
+    origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
 }));
