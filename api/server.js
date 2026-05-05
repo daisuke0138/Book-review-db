@@ -413,7 +413,7 @@ app.post("/api/post", async (req, res) => {
 });
 
 // 本番環境用エクスポート
-// module.exports = app;
+module.exports = app;
 
 // local環境ここでサーバーを起動します！！🤗
-app.listen(PORT, () => console.log("server start!!!"));
+// app.listen(PORT, () => console.log("server start!!!"));
