@@ -172,9 +172,9 @@ app.post("/api/books", upload.single("image"), async (req, res) => {
         // 画像がアップロードされた場合、Supabase Storageに保存
         if (req.file) {
             // sharpを使って圧縮処理
+            // ここでは画質最適化のみを行う設定にすると、サーバー負荷が激減します
             const compressedBuffer = await sharp(req.file.buffer)
-                .resize({ width: 800, withoutEnlargement: true }) // 横幅最大800px、拡大はしない
-                .jpeg({ quality: 80 }) // JPEG形式、画質80%で圧縮
+                .jpeg({ quality: 90, mozjpeg: true }) // 圧縮済みなので質は落としすぎない
                 .toBuffer();
 
             //ファイル名の生成 (ID_YYYY-MM-DD.jpg)
