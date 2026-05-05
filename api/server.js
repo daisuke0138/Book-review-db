@@ -22,7 +22,7 @@ const supabase = createClient(
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB limit
+        fileSize: 1 * 1024 * 1024, // 5MB limit
     },
     fileFilter: (req, file, cb) => {
         if (file.mimetype.startsWith("image/")) {
@@ -174,7 +174,7 @@ app.post("/api/books", upload.single("image"), async (req, res) => {
             // sharpを使って圧縮処理
             // ここでは画質最適化のみを行う設定にすると、サーバー負荷が激減します
             const compressedBuffer = await sharp(req.file.buffer)
-                .jpeg({ quality: 90, mozjpeg: true }) // 圧縮済みなので質は落としすぎない
+                .jpeg({ quality: 80 }) // 圧縮済みなので質は落としすぎない
                 .toBuffer();
 
             //ファイル名の生成 (ID_YYYY-MM-DD.jpg)
