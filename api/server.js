@@ -1,64 +1,110 @@
-// まずはexpressというnode.jsの機能を使えるように読み込みましょう🤗
 const express = require("express");
-
-// ここで実行をし、appの中にexpressの機能を使えるようにしています🤗
 const app = express();
-
-// prismaのclientの機能を使えるようにする🤗
 const { PrismaClient } = require("@prisma/client");
-
-// パスワードハッシュ化
 const bcrypt = require("bcrypt");
-
-// json web token jwtの機能を設定します🤗
 const jwt = require("jsonwebtoken");
-
-// 環境変数=秘密の鍵が使えるようにdotenvを記述して使えるようにします🤗
 require("dotenv").config();
-
-//CORS対策
 const cors = require("cors");
+const multer = require("multer"); // 画像転送
+const sharp = require("sharp"); // 画像圧縮
+const { createClient } = require("@supabase/supabase-js");
 
-
-// PORT=は起動するURLの番号になります🤗とても重要なので今回は統一してください🤗
 const PORT = 8888;
-
-// clientの機能を使えるように設定する
 const prisma = new PrismaClient();
 
-// jsで書いた文字列をjsonとしてexpressで使えるようにする必要があります🤗
-app.use(cors({
-    origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000",
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true
-}));
+// Supabase client for storage
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ROLE_KEY
+);
+
+// Multer setup for file uploads (memory storage)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith("image/")) {
+            cb(null, true);
+        } else {
+            cb(new Error("画像ファイルのみアップロード可能です"), false);
+        }
+    },
+});
+
+// CORS configuration
+app.use(
+    cors({
+        origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000",
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        credentials: true,
+    })
+);
 
 app.use(express.json());
 
-// 新規ユーザーAPI
+// JWT認証ミドルウェア
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({ error: "認証が必要です" });
+    }
+
+    jwt.verify(token, process.env.KEY, (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: "トークンが無効です" });
+        }
+        req.user = user;
+        next();
+    });
+};
+
+// オプショナル認証ミドルウェア（ログインしていなくてもOK）
+const optionalAuth = (req, res, next) => {
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+
+    if (token) {
+        jwt.verify(token, process.env.KEY, (err, user) => {
+            if (!err) {
+                req.user = user;
+            }
+        });
+    }
+    next();
+};
+
+// ========== 認証API ==========
+
+// 新規ユーザー登録API
 app.post("/api/auth/register", async (req, res) => {
     const { username, email, password } = req.body;
 
-    // 暗号化対応=bcryptを使ってハッシュ化する🤗
-    const hasedPass = await bcrypt.hash(password, 10);
+    try {
+        const hashedPass = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
-        data: {
-            username,
-            email,
-            password: hasedPass,
-        },
-    });
+        const user = await prisma.user.create({
+            data: {
+                username,
+                email,
+                password: hashedPass,
+            },
+        });
 
-    return res.json({ user });
+        return res.json({ user: { id: user.id, username: user.username, email: user.email } });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: "ユーザー登録に失敗しました" });
+    }
 });
 
 // ログインAPI
 app.post("/api/auth/login", async (req, res) => {
-    // email, passwordをチェックするために取得します🤗
     const { email, password } = req.body;
 
-    // whereはSQL等で出てくる条件を絞るという条件です🤗
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
@@ -67,16 +113,14 @@ app.post("/api/auth/login", async (req, res) => {
         });
     }
 
-    //compare bcryptのcompareは比較をしてチェックするおまじないです🤗
     const isPasswordCheck = await bcrypt.compare(password, user.password);
 
     if (!isPasswordCheck) {
         return res.status(401).json({
-            error: "そのパスワードは間違っていますよ！",
+            error: "そのパスワードは間違っています",
         });
     }
 
-    // token = チケットのイメージです🤗
     const token = jwt.sign({ id: user.id }, process.env.KEY, {
         expiresIn: "1d",
     });
@@ -84,59 +128,292 @@ app.post("/api/auth/login", async (req, res) => {
     return res.json({ token });
 });
 
-// 投稿用API
-app.post("/api/post", async (req, res) => {
-    const { content } = req.body;
-
-    if (!content) {
-        return res.status(400).json({
-            message: "投稿内容がありません！",
+// 現在のユーザー情報取得API
+app.get("/api/auth/me", authenticateToken, async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: {
+                id: true,
+                username: true,
+                email: true,
+            },
         });
+
+        if (!user) {
+            return res.status(404).json({ error: "ユーザーが見つかりません" });
+        }
+
+        return res.json(user);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: "サーバーエラーです" });
+    }
+});
+
+// ========== 本（Book）API ==========
+
+// 本の登録API（画像アップロード対応）
+app.post("/api/books", upload.single("image"), async (req, res) => {
+    const { title } = req.body;
+
+    if (!title || !title.trim()) {
+        return res.status(400).json({ message: "タイトルは必須です" });
     }
 
     try {
-        // 登録の処理を記述していく🤗
+        // 1. まずDBにレコードを作成（imageUrlは一旦null）
+        const newBook = await prisma.book.create({
+            data: { title: title.trim(), imageUrl: null },
+        });
+
+        let imageUrl = null;
+
+        // 画像がアップロードされた場合、Supabase Storageに保存
+        if (req.file) {
+            // sharpを使って圧縮処理
+            const compressedBuffer = await sharp(req.file.buffer)
+                .resize({ width: 800, withoutEnlargement: true }) // 横幅最大800px、拡大はしない
+                .jpeg({ quality: 80 }) // JPEG形式、画質80%で圧縮
+                .toBuffer();
+
+            //ファイル名の生成 (ID_YYYY-MM-DD.jpg)
+            const datePart = newBook.createdAt.toISOString().split('T')[0];
+            const fileName = `books/${newBook.id}_${datePart}.jpg`;
+
+            //Supabaseにアップロード
+            const { error } = await supabase.storage
+                .from("book-images")
+                .upload(fileName, compressedBuffer, {
+                    contentType: "image/jpeg",
+                    upsert: true,
+                });
+            
+            if (error) {
+                console.error("画像アップロードエラー:", error);
+            } else {
+                // 公開URLを取得
+                const { data: publicData } = supabase.storage
+                    .from("book-images")
+                    .getPublicUrl(fileName);
+                imageUrl = publicData.publicUrl;
+
+                //画像URLをDBに保存
+                await prisma.book.update({
+                    where: { id: newBook.id },
+                    data: { imageUrl },
+                });
+            }
+        }
+
+        // 最終的なオブジェクトを返却
+        const finalBook = await prisma.book.findUnique({
+            where: { id: newBook.id }
+        });
+
+        res.status(201).json(newBook);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "本の登録に失敗しました" });
+    }
+});
+
+// 本のリスト取得API
+app.get("/api/books", async (req, res) => {
+    try {
+        const books = await prisma.book.findMany({
+            orderBy: { createdAt: "desc" },
+        });
+        res.json(books);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "本のリスト取得に失敗しました" });
+    }
+});
+
+// ========== 投稿（Post）API ==========
+
+// 感想投稿API
+app.post("/api/posts", authenticateToken, async (req, res) => {
+    const { content, bookId } = req.body;
+
+    if (!content || !content.trim()) {
+        return res.status(400).json({ message: "投稿内容がありません" });
+    }
+
+    if (!bookId) {
+        return res.status(400).json({ message: "本を選択してください" });
+    }
+
+    try {
         const newPost = await prisma.post.create({
             data: {
-                content,
-                authorId: 1, //MEMO: 最後に修正します🤗
+                content: content.trim(),
+                authorId: req.user.id,
+                bookId: parseInt(bookId),
             },
             include: {
-                author: true,
+                author: {
+                    select: {
+                        id: true,
+                        username: true,
+                        email: true,
+                    },
+                },
+                book: true,
+                likes: true,
+                _count: {
+                    select: { likes: true },
+                },
             },
         });
         res.status(201).json(newPost);
     } catch (err) {
-        console.log(err);
-        res.status(500).json({
-            message: "サーバーエラーです！項目がおかしい、何か見直してください！",
-        });
+        console.error(err);
+        res.status(500).json({ message: "投稿に失敗しました" });
     }
 });
 
-// 取得用API
-app.get("/api/get_post", async (req, res) => {
+// 特定の本の感想取得API
+app.get("/api/get_post", optionalAuth, async (req, res) => {
+    const { bookId } = req.query;
+
     try {
-        // 取得の処理を記述していく🤗
+        const whereClause = bookId ? { bookId: parseInt(bookId) } : {};
+
         const postData = await prisma.post.findMany({
-            take: 10,
+            where: whereClause,
+            take: 50,
             orderBy: { createdAt: "desc" },
             include: {
-                author: true,
+                author: {
+                    select: {
+                        id: true,
+                        username: true,
+                        email: true,
+                    },
+                },
+                book: true,
+                likes: {
+                    select: {
+                        id: true,
+                        userId: true,
+                        postId: true,
+                        createdAt: true,
+                    },
+                },
+                _count: {
+                    select: { likes: true },
+                },
             },
         });
-        res.status(201).json(postData);
+        res.status(200).json(postData);
     } catch (err) {
-        console.log(err);
-        res.status(500).json({
-            message: "サーバーエラーです！項目がおかしい、何か見直してください！",
-        });
+        console.error(err);
+        res.status(500).json({ message: "サーバーエラーです" });
     }
 });
 
+// ========== いいね（Like）API ==========
+
+// いいね追加API
+app.post("/api/posts/:id/like", authenticateToken, async (req, res) => {
+    const postId = parseInt(req.params.id);
+    const userId = req.user.id;
+
+    try {
+        // 既にいいねしているか確認
+        const existingLike = await prisma.like.findUnique({
+            where: {
+                userId_postId: {
+                    userId,
+                    postId,
+                },
+            },
+        });
+
+        if (existingLike) {
+            return res.status(400).json({ message: "既にいいねしています" });
+        }
+
+        const like = await prisma.like.create({
+            data: {
+                userId,
+                postId,
+            },
+        });
+
+        res.status(201).json(like);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "いいねに失敗しました" });
+    }
+});
+
+// いいね削除API
+app.delete("/api/posts/:id/like", authenticateToken, async (req, res) => {
+    const postId = parseInt(req.params.id);
+    const userId = req.user.id;
+
+    try {
+        await prisma.like.delete({
+            where: {
+                userId_postId: {
+                    userId,
+                    postId,
+                },
+            },
+        });
+
+        res.status(200).json({ message: "いいねを取り消しました" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "いいねの取り消しに失敗しました" });
+    }
+});
+
+// ========== 旧API（後方互換性のため残す） ==========
+
+// 旧投稿API
+app.post("/api/post", async (req, res) => {
+    const { content } = req.body;
+
+    if (!content) {
+        return res.status(400).json({ message: "投稿内容がありません" });
+    }
+
+    try {
+        // bookIdがない場合はデフォルトの本を作成または取得
+        let defaultBook = await prisma.book.findFirst({
+            where: { title: "未分類" },
+        });
+
+        if (!defaultBook) {
+            defaultBook = await prisma.book.create({
+                data: { title: "未分類" },
+            });
+        }
+
+        const newPost = await prisma.post.create({
+            data: {
+                content,
+                authorId: 1,
+                bookId: defaultBook.id,
+            },
+            include: {
+                author: true,
+                book: true,
+            },
+        });
+        res.status(201).json(newPost);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "サーバーエラーです" });
+    }
+});
+
+// 本番環境用エクスポート
+// module.exports = app;
+
 // local環境ここでサーバーを起動します！！🤗
-// app.listen(PORT, () => console.log("server start!!!"));
-
-
-// 本番環境ここでサーバーを起動します！！
-module.exports = app;
+app.listen(PORT, () => console.log("server start!!!"));
