@@ -81,7 +81,7 @@ const optionalAuth = (req, res, next) => {
 
 // 新規ユーザー登録API
 app.post("/api/auth/register", async (req, res) => {
-    const { username, email, password } = req.body;
+    const { username, libraryCardNumber, email, password } = req.body;
 
     try {
         const hashedPass = await bcrypt.hash(password, 10);
@@ -89,12 +89,13 @@ app.post("/api/auth/register", async (req, res) => {
         const user = await prisma.user.create({
             data: {
                 username,
+                libraryCardNumber,
                 email,
                 password: hashedPass,
             },
         });
 
-        return res.json({ user: { id: user.id, username: user.username, email: user.email } });
+        return res.json({ user: { id: user.id, username: user.username, libraryCardNumber: user.libraryCardNumber } });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: "ユーザー登録に失敗しました" });
