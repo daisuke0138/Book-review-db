@@ -231,6 +231,42 @@ app.get("/api/books", async (req, res) => {
     }
 });
 
+// 最新レビュー取得API（異なる本の最新レビューを取得）
+app.get("/api/books/latest-reviewed", async (req, res) => {
+    const limit = parseInt(req.query.limit) || 5;
+
+    try {
+        const latestReviews = await prisma.post.findMany({
+            orderBy: { createdAt: "desc" },
+            take: limit,
+            distinct: ["bookId"],
+            select: {
+                id: true,
+                content: true,
+                createdAt: true,
+                author: {
+                    select: {
+                        id: true,
+                        username: true,
+                    },
+                },
+                book: {
+                    select: {
+                        id: true,
+                        title: true,
+                        imageUrl: true,
+                    },
+                },
+            },
+        });
+
+        res.json(latestReviews);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "最新レビューの取得に失敗しました" });
+    }
+});
+
 // ========== 投稿（Post）API ==========
 
 // 感想投稿API
