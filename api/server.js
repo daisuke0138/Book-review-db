@@ -1,7 +1,6 @@
 const express = require("express");
 const app = express();
 const { PrismaClient } = require("@prisma/client");
-const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const cors = require("cors");
@@ -81,20 +80,43 @@ const optionalAuth = (req, res, next) => {
 
 // 新規ユーザー登録API
 app.post("/api/auth/register", async (req, res) => {
-    const { username, email, password } = req.body;
+    const { username, libraryCardNumber } = req.body;
+
+    // バリデーション
+    if (!username || !username.trim()) {
+        return res.status(400).json({ error: "ユーザー名は必須です" });
+    }
+
+    if (!libraryCardNumber || !libraryCardNumber.trim()) {
+        return res.status(400).json({ error: "図書カード番号は必須です" });
+    }
 
     try {
-        const hashedPass = await bcrypt.hash(password, 10);
+        // 重複チェック
+        const existingUsername = await prisma.user.findUnique({
+            where: { username: username.trim() },
+        });
+
+        if (existingUsername) {
+            return res.status(400).json({ error: "このユーザー名は既に使用されています" });
+        }
+
+        const existingCardNumber = await prisma.user.findUnique({
+            where: { libraryCardNumber: libraryCardNumber.trim() },
+        });
+
+        if (existingCardNumber) {
+            return res.status(400).json({ error: "この図書カード番号は既に登録されています" });
+        }
 
         const user = await prisma.user.create({
             data: {
-                username,
-                email,
-                password: hashedPass,
+                username: username.trim(),
+                libraryCardNumber: libraryCardNumber.trim(),
             },
         });
 
-        return res.json({ user: { id: user.id, username: user.username, email: user.email } });
+        return res.json({ user: { id: user.id, username: user.username, libraryCardNumber: user.libraryCardNumber } });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: "ユーザー登録に失敗しました" });
@@ -103,29 +125,45 @@ app.post("/api/auth/register", async (req, res) => {
 
 // ログインAPI
 app.post("/api/auth/login", async (req, res) => {
-    const { email, password } = req.body;
+    const { username, libraryCardNumber } = req.body;
 
-    const user = await prisma.user.findUnique({ where: { email } });
-
-    if (!user) {
-        return res.status(401).json({
-            error: "そのユーザーは存在しません",
-        });
+    // バリデーション
+    if (!username || !username.trim()) {
+        return res.status(400).json({ error: "ユーザー名は必須です" });
     }
 
-    const isPasswordCheck = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordCheck) {
-        return res.status(401).json({
-            error: "そのパスワードは間違っています",
-        });
+    if (!libraryCardNumber || !libraryCardNumber.trim()) {
+        return res.status(400).json({ error: "図書カード番号は必須です" });
     }
 
-    const token = jwt.sign({ id: user.id }, process.env.KEY, {
-        expiresIn: "1d",
-    });
+    try {
+        // ユーザー名で検索
+        const user = await prisma.user.findUnique({
+            where: { username: username.trim() }
+        });
 
-    return res.json({ token });
+        if (!user) {
+            return res.status(401).json({
+                error: "そのユーザーは存在しません",
+            });
+        }
+
+        // 図書カード番号の照合
+        if (user.libraryCardNumber !== libraryCardNumber.trim()) {
+            return res.status(401).json({
+                error: "図書カード番号が一致しません",
+            });
+        }
+
+        const token = jwt.sign({ id: user.id }, process.env.KEY, {
+            expiresIn: "1d",
+        });
+
+        return res.json({ token });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: "ログインに失敗しました" });
+    }
 });
 
 // 現在のユーザー情報取得API
@@ -136,7 +174,7 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
             select: {
                 id: true,
                 username: true,
-                email: true,
+                libraryCardNumber: true,
             },
         });
 
@@ -188,7 +226,7 @@ app.post("/api/books", upload.single("image"), async (req, res) => {
                     contentType: "image/jpeg",
                     upsert: true,
                 });
-            
+
             if (error) {
                 console.error("画像アップロードエラー:", error);
             } else {
@@ -231,6 +269,42 @@ app.get("/api/books", async (req, res) => {
     }
 });
 
+// 最新レビ��ー取得API（異なる本の最新レビューを取得）
+app.get("/api/books/latest-reviewed", async (req, res) => {
+    const limit = parseInt(req.query.limit) || 5;
+
+    try {
+        const latestReviews = await prisma.post.findMany({
+            orderBy: { createdAt: "desc" },
+            take: limit,
+            distinct: ["bookId"],
+            select: {
+                id: true,
+                content: true,
+                createdAt: true,
+                author: {
+                    select: {
+                        id: true,
+                        username: true,
+                    },
+                },
+                book: {
+                    select: {
+                        id: true,
+                        title: true,
+                        imageUrl: true,
+                    },
+                },
+            },
+        });
+
+        res.json(latestReviews);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "最新レビューの取得に失敗しました" });
+    }
+});
+
 // ========== 投稿（Post）API ==========
 
 // 感想投稿API
@@ -257,7 +331,7 @@ app.post("/api/posts", authenticateToken, async (req, res) => {
                     select: {
                         id: true,
                         username: true,
-                        email: true,
+                        libraryCardNumber: true,
                     },
                 },
                 book: true,
@@ -290,7 +364,7 @@ app.get("/api/get_post", optionalAuth, async (req, res) => {
                     select: {
                         id: true,
                         username: true,
-                        email: true,
+                        libraryCardNumber: true,
                     },
                 },
                 book: true,

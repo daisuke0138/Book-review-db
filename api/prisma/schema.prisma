@@ -13,12 +13,11 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  username  String
-  email     String   @unique
-  password  String
-  posts     Post[]
-  likes     Like[]
+  id                Int      @id @default(autoincrement())
+  username          String   @unique
+  libraryCardNumber String   @unique
+  posts             Post[]
+  likes             Like[]
 }
 
 model Post {
